@@ -5,6 +5,7 @@ import socket
 
 PORT = ':2947'
 
+
 def multGPSListen(silvus_ip1, silvus_ip2, silvus_ip3):
     silvus_ip1 = silvus_ip1+PORT
     silvus_ip2 = silvus_ip2+PORT
@@ -27,61 +28,107 @@ def multGPSListen(silvus_ip1, silvus_ip2, silvus_ip3):
                     if '$GPGGA' in output:
                         print(output)
 
-def gpsListen(silvus_ip):
-    timeout = 0.5
 
-    silvus_ip = silvus_ip + PORT
+def gpsListen(silvus_ip):
+    
+    while True:
+        process1 = gpspipe(silvus_ip)
+
+        while True:
+            gpslog(process1)
+            
+            status = ping(silvus_ip)
+            
+            if not status:
+                break
+
+
+def GPSlog():
+    IPs = ['172.20.81.233', '172.20.125.84', '172.20.153.102']
+
+
+    # GPSpipe command to run
+    gpspipe_cmd = ['gpspipe', '-r', '172.20.81.233:2947']
+
+    timeout = 1
+
+    # Start gpspipe
+    gpspipe_process = subprocess.Popen(gpspipe_cmd, stdout=subprocess.PIPE)
 
     while True:
-        process = subprocess.Popen(['gpspipe', '-r', silvus_ip], stdout=subprocess.PIPE)
-        while True:
-            ready, _, _ = select.select([process.stdout], [], [], timeout)
+        # Check network connectivity
+        connected = False
+        for ip in IPs:
+            try:
+                s = socket.create_connection((ip, int(PORT[1:]), timeout))
+                process = subprocess.Popen(['gpspipe', '-r', f"{ip}:2947"], stdout=subprocess.PIPE, stdin=s)
+                print(f"Connected to {ip}")
+                while True:
+                    output = process.stdout.readline().decode().strip()
+                    if output == '' and process.poll() is not None:
+                        break
+                    if '$GPGGA' in output:
+                        print(f"{ip} GPS data: {output}")
+                if process.poll() is not None:
+                    print(f"Connection to {ip} lost. Retrying...")
+            except:
+                pass
 
-            if ready:
-                output = process.stdout.readline().decode()
-                if output == []:
-                    print("Timeout occurred, restarting gpspipe")
-                    break
-                if '$GPGGA' in output:
-                    print(output)
-                    with open('output.txt', 'a') as file:
-                        file.write(output)
+        # Restart gpspipe if network connection is reestablished
+        if connected and gpspipe_process.poll() is not None:
+            gpspipe_process = subprocess.Popen(gpspipe_cmd, stdout=subprocess.PIPE)
 
-        if process.poll() is not None:
-            process.terminate()
-            print("No data received, restarting gpspipe")
+        # Stop gpspipe if network connection is lost
+        if not connected and gpspipe_process.poll() is None:
+            gpspipe_process.kill()
+
+        # Read GPS data from gpspipe
+        output = gpspipe_process.stdout.readline().decode()
+        if output == '' and gpspipe_process.poll() is not None:
+            # If gpspipe has stopped outputting data, it may have crashed, so restart it
+            gpspipe_process = subprocess.Popen(gpspipe_cmd, stdout=subprocess.PIPE)
+        elif '$GPGGA' in output:
+            # Process GPS data here
+            print(f"{ip} GPS data: {output}")
+
+        # Sleep for a short period to avoid hogging CPU resources
         time.sleep(0.1)
 
-def gpsListenTimeout(silvus_ip):
-    timeout = 10
+def ping(host):
+    """
+    Returns True if the specified host is reachable, False otherwise.
+    """
 
-    while True:
-        process = subprocess.Popen(['gpspipe', '-r', silvus_ip], stdout=subprocess.PIPE)
+    result = subprocess.run(['fping', '-Q', '100000', '-c1', '-t500', host], stdout = subprocess.DEVNULL)
 
-        while True:
-            output = process.stdout.readline().decode()
-            if '$GPGGA' in output:
-                print(output)
+    return result.returncode == 0
 
-            try:
-                s = socket.create_connection((silvus_ip, int(PORT[1:])), timeout) # the port for socket must be passed as an integer. int(PORT[1:]) removes the colon from the beginning of PORT (taking advantage of the fact that PORT is a string) and then casts it to an int
+def gpspipe(ip):
+    process = subprocess.Popen(['gpspipe', '-r', ip], stdout = subprocess.PIPE)
 
-            except socket.timeout:
-                print("No connection to radio, restarting GPSpipe")
-                break
-            except socket.error as e:
-                print(f"Error connecting to {silvus_ip}: {e}")
-                continue
+    return process
+
+def gpslog(process):
+    output = process.stdout.readline().decode()
+    if '$GPGGA' in output:
+        print(output)
 
 
-            s.close()
 
-if __name__ =="__main__":
+
+
+
+
+if __name__ == "__main__":
     silvus_ip1 = '172.20.81.233'
     silvus_ip2 = '172.20.125.84'
     silvus_ip3 = '172.20.153.102'
 
-    #multGPSListen(silvus_ip1, silvus_ip2, silvus_ip3)
+    # multGPSListen(silvus_ip1, silvus_ip2, silvus_ip3)
 
-    gpsListenTimeout(silvus_ip1)
-    #gpsListen(silvus_ip2)
+    gpsListen(silvus_ip2)
+
+    # wireshark
+    # switch to UDP instead of TCP
+    # broadcast?
+    # nmap
